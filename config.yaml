@@ -6,7 +6,7 @@
 email:
   # 发件邮箱（QQ 邮箱，password 填 SMTP 授权码，不是 QQ 密码）
   from_addr: "123456789@qq.com"
-  from_name: "每日要闻速览"
+  from_name: "day60sMsg"   # 收件箱中显示的发件人名称
   to_addrs:
     - "123456789@qq.com"
   smtp:
