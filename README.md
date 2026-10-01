@@ -94,10 +94,39 @@ RSSHub 的输出就是标准 RSS，本程序无需任何改动。想追踪其他
 
 ## 调整内容
 
-- **版块条数**：`config.yaml` 的 `budget`（默认国际 6 / 国内 6 / 科技人物 4，共 16 条，约 60 秒读完）
-- **增删数据源**：`sources` 下增删条目；任意 RSS 都能接（`type: rss`），`section` 决定它进入哪个版块
-- **AI 供应商**：任何 OpenAI 兼容接口均可，改 `llm.base_url` / `model`（智谱 `glm-4-flash` 免费额度大，DeepSeek `deepseek-chat` 便宜）
+- **版块条数**：`config.yaml` 的 `budget`（当前国际 10 / 国内 10 / 科技人物 8，共 28 条）
+- **增删数据源**：`sources` 下增删条目；三种类型：
+  - `rss` —— 任意 RSS/Atom
+  - `60s` —— 每天60秒读懂世界聚合接口
+  - `gnews` —— Google News 关键词检索（`query` 字段填人名或机构名，如 `Elon Musk`）
+- **AI 供应商**：任何 OpenAI 兼容接口均可，改 `llm.base_url` / `model`
 - **挑选项规则**：`llm.py` 顶部的 `SYSTEM_PROMPT`（编辑价值判断标准）
+
+## 科技版块：大佬动向是怎么来的
+
+「科技·大佬动向」不依赖爬 X。直连 X 需要登录态、官方 API 每月 200 美元起，
+公共 RSSHub 实例的 Twitter 路由现已普遍关闭，因此采用 **Google News 关键词追踪**：
+
+- 对马斯克、Sam Altman、黄仁勋、OpenAI、特斯拉等建立 `gnews` 源，
+  按人名/机构名检索全球媒体报道（免费、无需认证、每人约 100 条/天）
+- 大佬有大动作必然上新闻，覆盖度实际上比 X 时间线更全（含媒体报道与解读）
+- `gnews` 类型会自动剥离标题的 `- 媒体名` 后缀，并以真实媒体名（AP News、路透等）作为来源显示
+- The Verge / TechCrunch / Hacker News 作为行业大事的兜底
+
+要增删追踪对象，在 `config.yaml` 的科技版块复制一条 `gnews` 源改 `query` 即可。
+如果用自有服务器资源想直连 X，见下节。
+
+## 接入 X（Twitter）动向（可选）
+
+服务器需装 Node.js 并跑 RSSHub，对内存有要求（实测 1GB 内存的实例较吃紧）：
+
+```bash
+docker run -d --name rsshub -p 1200:1200 \
+  -e TWITTER_AUTH_TOKEN=<你的auth_token> diygod/rsshub
+```
+
+`auth_token` 获取：浏览器登录 x.com → F12 → Application → Cookies → 复制 `auth_token`。
+然后把 `config.yaml` 中 `X·Elon Musk` 等源的 `enabled` 改为 `true`。
 
 ## 目录结构
 
@@ -129,4 +158,4 @@ cd /opt/day60sMsg && git pull && ./venv/bin/pip install -q -r requirements.txt
 - **某天没收到**：看 `logs/YYYYMM.log` 和 cron.log；候选池为空且补抓也失败时程序不会发空邮件，退出码 1
 - **中英文混杂**：降级模式（无 AI key）下国际源保留英文原文，配好 key 即自动翻译
 - **想再发一次当天内容**：正式发送会去重并清池，重发用 `--send-test`
-- **抓取频率**：默认每 3 小时一轮；想更密集可改成每小时（`0 * * * *`），9 源一轮只需几秒、流量以 MB 计
+- **抓取频率**：默认每 3 小时一轮；想更密集可改成每小时（`0 * * * *`）
