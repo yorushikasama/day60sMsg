@@ -14,7 +14,8 @@ def send_email(cfg, subject, html_text, plain_text):
     password = str(smtp.get("password", ""))
     if not password or not password.isascii() or " " in password:
         raise RuntimeError(
-            "SMTP 授权码未配置：请在 config.yaml 的 email.smtp.password 填入 QQ 邮箱 16 位授权码"
+            "SMTP 授权码未配置：请在 config.local.yaml（推荐）或 config.yaml 的 "
+            "email.smtp.password 填入 QQ 邮箱 16 位授权码"
             "（QQ 邮箱网页版 → 设置 → 账号 → 开启 SMTP 服务后生成），不是 QQ 登录密码"
         )
 
