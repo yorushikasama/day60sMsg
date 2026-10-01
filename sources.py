@@ -1,5 +1,6 @@
 """多源抓取：RSS/Atom（含 RSSHub）与 60s 聚合接口，统一归一化为 dict。"""
 import hashlib
+import html
 import logging
 import re
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -17,10 +18,11 @@ WS_RE = re.compile(r"\s+")
 
 
 def _clean(text, limit=220):
-    """去掉 HTML 标签并压缩空白；超长时在词边界截断并加省略号。"""
+    """去掉 HTML 标签、解码实体并压缩空白；超长时在词边界截断并加省略号。"""
     if not text:
         return ""
-    text = TAG_RE.sub(" ", text)
+    text = html.unescape(text)
+    text = TAG_RE.sub(" ", text)  # 先解码实体，再清除随之显现的标签
     text = WS_RE.sub(" ", text).strip()
     if len(text) <= limit:
         return text
