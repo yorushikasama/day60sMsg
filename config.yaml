@@ -27,15 +27,15 @@ llm:
 
 fetch:
   window_hours: 24       # 只收录最近 N 小时发布的内容（无日期的源不受限）
-  max_per_source: 15     # 每个源最多送入 AI 的候选条数
+  max_per_source: 8    # 每个源最多送入 AI 的候选条数（人物追踪源条目多，控制总量）
   timeout: 15            # 单源请求超时（秒）
   retries: 2
 
 # 各版块选取条数（AI 挑选时的预算；无 AI 时同样生效）
 budget:
-  国际: 6
-  国内: 6
-  科技人物: 4
+  国际: 10
+  国内: 10
+  科技人物: 8
 
 # ------------------------------------------------------------
 # 数据源
@@ -83,10 +83,50 @@ sources:
     weight: 4
   # 36氪 / 虎嗅的官方 RSS 长期格式错误（实测解析失败），如需接入建议改走自建 RSSHub
 
-  # ---- 科技人物 / X 动向 ----
+  # ---- 科技人物 / 大佬动向 ----
+  # 人物追踪：Google News 按人名/机构检索（免费、无需认证、覆盖全球媒体）。
+  # 大佬有大动作必然上新闻，比直连 X 更稳定。type: gnews 会自动剥离
+  # 标题的 "- 媒体名" 后缀，并以真实媒体名作为来源显示。
+  - name: 人物·马斯克
+    type: gnews
+    url: https://news.google.com/rss/search?q={q}&hl=en-US&gl=US&ceid=US:en
+    query: Elon Musk
+    section: 科技人物
+    weight: 7
+  - name: 人物·Sam Altman
+    type: gnews
+    url: https://news.google.com/rss/search?q={q}&hl=en-US&gl=US&ceid=US:en
+    query: Sam Altman
+    section: 科技人物
+    weight: 7
+  - name: 人物·黄仁勋
+    type: gnews
+    url: https://news.google.com/rss/search?q={q}&hl=en-US&gl=US&ceid=US:en
+    query: Jensen Huang
+    section: 科技人物
+    weight: 6
+  - name: 机构·OpenAI
+    type: gnews
+    url: https://news.google.com/rss/search?q={q}&hl=en-US&gl=US&ceid=US:en
+    query: OpenAI
+    section: 科技人物
+    weight: 6
+  - name: 机构·特斯拉
+    type: gnews
+    url: https://news.google.com/rss/search?q={q}&hl=en-US&gl=US&ceid=US:en
+    query: Tesla
+    section: 科技人物
+    weight: 5
+
+  # 科技媒体：兜底覆盖人物之外的行业大事
   - name: The Verge
     type: rss
     url: https://www.theverge.com/rss/index.xml
+    section: 科技人物
+    weight: 5
+  - name: TechCrunch
+    type: rss
+    url: https://techcrunch.com/feed/
     section: 科技人物
     weight: 5
   - name: Hacker News
@@ -95,8 +135,9 @@ sources:
     section: 科技人物
     weight: 4
 
-  # X（Twitter）人物动向：需要自建 RSSHub 并提供自己 X 账号的 cookie，
-  # 配置方法见 README「接入 X 动向」。配好后把 enabled 改为 true。
+  # 直连 X（Twitter）：需要自建 RSSHub 且提供 X 账号 cookie。服务器未装 Node
+  # 且内存吃紧，故默认停用；Google News 人物追踪已能覆盖大佬的重大动态。
+  # 若要启用，见 README「接入 X 动向」。
   - name: X·Elon Musk
     type: rss
     url: http://127.0.0.1:1200/twitter/user/elonmusk

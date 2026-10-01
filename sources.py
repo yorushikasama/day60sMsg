@@ -5,6 +5,7 @@ import logging
 import re
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timedelta, timezone
+from urllib.parse import quote
 
 import feedparser
 import requests
@@ -72,6 +73,7 @@ def fetch_rss(source, cfg):
             "url": e.get("link", ""),
             "summary": _clean(e.get("summary") or e.get("description", "")),
             "source": source["name"],
+            "source_key": source["name"],
             "section": source["section"],
             "weight": int(source.get("weight", 1)),
             "published": _to_cst(e.get("published_parsed") or e.get("updated_parsed")),
@@ -99,6 +101,7 @@ def fetch_60s(source, cfg):
             "url": "",          # 60s 为浓缩一句话新闻，无单独原文链接
             "summary": "",
             "source": source["name"],
+            "source_key": source["name"],
             "section": source["section"],
             "weight": int(source.get("weight", 1)),
             "published": None,
@@ -109,7 +112,52 @@ def fetch_60s(source, cfg):
     return out
 
 
-FETCHERS = {"rss": fetch_rss, "60s": fetch_60s}
+TITLE_SUFFIX_RE = re.compile(r"\s+[-–—]\s+[^-–—]{2,40}$")
+
+
+def fetch_gnews(source, cfg):
+    """Google News RSS 关键词/人物检索。
+
+    用于追踪特定人物与机构动态（Elon Musk、Sam Altman、OpenAI 等）——
+    大厂动态一定会上新闻，比直连 X 更稳定（X 官方 API 昂贵、爬取需登录态）。
+    标题形如 "xxx - The Guardian"，需剥离媒体后缀并改用真实媒体名作来源。
+    """
+    url = source["url"].replace("{q}", quote(source.get("query", "")))
+    content = _http_get(url, cfg["fetch"]["timeout"])
+    feed = feedparser.parse(content)
+    if feed.bozo and not feed.entries:
+        raise RuntimeError(f"Google News 解析失败: {getattr(feed, 'bozo_exception', '')}")
+
+    out = []
+    for e in feed.entries:
+        raw_title = _clean(e.get("title", ""), 200)
+        if not raw_title:
+            continue
+        # 剥离 " - 媒体名" 后缀
+        title = TITLE_SUFFIX_RE.sub("", raw_title).strip()
+        # 真实媒体名优先取 source.title，否则从后缀解析
+        origin = ""
+        src = e.get("source")
+        if isinstance(src, dict):
+            origin = src.get("title", "")
+        if not origin:
+            suffix = raw_title[len(title):].strip(" -–—")
+            origin = suffix
+        out.append({
+            "id": _item_id(e.get("link", ""), raw_title),
+            "title": title,
+            "url": e.get("link", ""),
+            "summary": "",  # Google News 的 summary 只是关联文章标题列表，非正文，留空避免噪音
+            "source": _clean(origin, 28) or source["name"],
+            "source_key": source["name"],  # 归组用配置源名；source 仅用于展示
+            "section": source["section"],
+            "weight": int(source.get("weight", 1)),
+            "published": _to_cst(e.get("published_parsed")),
+        })
+    return out
+
+
+FETCHERS = {"rss": fetch_rss, "60s": fetch_60s, "gnews": fetch_gnews}
 
 
 def fetch_all(cfg):
@@ -144,7 +192,11 @@ def _fetch_one(source, cfg):
 
 
 def filter_fresh(items, cfg):
-    """按时间窗过滤（无发布时间的条目默认保留），并限制每源候选数。"""
+    """按时间窗过滤（无发布时间的条目默认保留），并限制每源候选数。
+
+    按 source_key（配置中的源名）分组，而非展示用的 source：
+    Google News 每条来自不同媒体，若按媒体分组会绕过每源上限、淹没问题。
+    """
     window = int(cfg["fetch"].get("window_hours", 24))
     max_per = int(cfg["fetch"].get("max_per_source", 15))
     deadline = datetime.now(CST) - timedelta(hours=window)
@@ -153,9 +205,9 @@ def filter_fresh(items, cfg):
     for it in items:
         if it["published"] and it["published"] < deadline:
             continue
-        by_source.setdefault(it["source"], []).append(it)
+        by_source.setdefault(it.get("source_key") or it["source"], []).append(it)
 
-    for source, group in by_source.items():
+    for group in by_source.values():
         dated = [i for i in group if i["published"]]
         undated = [i for i in group if not i["published"]]
         dated.sort(key=lambda i: i["published"], reverse=True)
