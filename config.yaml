@@ -26,22 +26,24 @@ llm:
   temperature: 0.2
 
 fetch:
-  window_hours: 24       # 只收录最近 N 小时发布的内容（无日期的源不受限）
-  max_per_source: 8    # 每个源最多送入 AI 的候选条数（人物追踪源条目多，控制总量）
-  timeout: 15            # 单源请求超时（秒）
+  window_hours: 48       # 只收录最近 N 小时发布的内容（无日期的源不受限）。
+                         # 48h 而非 24h：官方博客等一手源发布频率低（几天一篇），
+                         # 窗口太窄会把最有价值的一手信息滤掉；去重机制保证不重复推送。
+  max_per_source: 8      # 每个源最多送入 AI 的候选条数（主题检索源条目多，控制总量）
+  timeout: 20            # 单源请求超时（秒）
   retries: 2
 
 # 各版块选取条数（AI 挑选时的预算；无 AI 时同样生效）
 budget:
   国际: 10
   国内: 10
-  科技人物: 8
+  AI前沿: 10
 
 # ------------------------------------------------------------
 # 数据源
 #   type: rss   —— 任意 RSS/Atom（含自建 RSSHub 输出）
 #   type: 60s   —— vikiboss/60s 聚合接口（每天60秒读懂世界）
-#   section: 国际 / 国内 / 科技人物
+#   section: 国际 / 国内 / AI前沿
 #   weight: 降级模式(无 AI)时的排序权重，越大越靠前
 #   enabled: false 可临时停用某个源
 # ------------------------------------------------------------
@@ -83,70 +85,81 @@ sources:
     weight: 4
   # 36氪 / 虎嗅的官方 RSS 长期格式错误（实测解析失败），如需接入建议改走自建 RSSHub
 
-  # ---- 科技人物 / 大佬动向 ----
-  # 人物追踪：Google News 按人名/机构检索（免费、无需认证、覆盖全球媒体）。
-  # 大佬有大动作必然上新闻，比直连 X 更稳定。type: gnews 会自动剥离
-  # 标题的 "- 媒体名" 后缀，并以真实媒体名作为来源显示。
-  - name: 人物·马斯克
-    type: gnews
-    url: https://news.google.com/rss/search?q={q}&hl=en-US&gl=US&ceid=US:en
-    query: Elon Musk
-    section: 科技人物
+  # ---- AI 前沿 ----
+  # 官方一手信息
+  - name: OpenAI 官方博客
+    type: rss
+    url: https://openai.com/blog/rss.xml
+    section: AI前沿
     weight: 7
-  - name: 人物·Sam Altman
-    type: gnews
-    url: https://news.google.com/rss/search?q={q}&hl=en-US&gl=US&ceid=US:en
-    query: Sam Altman
-    section: 科技人物
+  - name: Google DeepMind
+    type: rss
+    url: https://deepmind.google/blog/rss.xml
+    section: AI前沿
     weight: 7
-  - name: 人物·黄仁勋
-    type: gnews
-    url: https://news.google.com/rss/search?q={q}&hl=en-US&gl=US&ceid=US:en
-    query: Jensen Huang
-    section: 科技人物
+  - name: Hugging Face
+    type: rss
+    url: https://huggingface.co/blog/feed.xml
+    section: AI前沿
     weight: 6
-  - name: 机构·OpenAI
+
+  # 主题检索：覆盖 Anthropic 等无可用官方 RSS 的机构与行业大事
+  - name: AI·Anthropic
     type: gnews
     url: https://news.google.com/rss/search?q={q}&hl=en-US&gl=US&ceid=US:en
-    query: OpenAI
-    section: 科技人物
+    query: Anthropic
+    section: AI前沿
+    weight: 7
+  - name: AI·行业动态
+    type: gnews
+    url: https://news.google.com/rss/search?q={q}&hl=en-US&gl=US&ceid=US:en
+    query: artificial intelligence
+    section: AI前沿
     weight: 6
-  - name: 机构·特斯拉
+  - name: AI·监管政策
     type: gnews
     url: https://news.google.com/rss/search?q={q}&hl=en-US&gl=US&ceid=US:en
-    query: Tesla
-    section: 科技人物
+    query: AI regulation
+    section: AI前沿
     weight: 5
 
-  # 科技媒体：兜底覆盖人物之外的行业大事
-  - name: The Verge
+  # 媒体解读与深度
+  - name: TechCrunch AI
     type: rss
-    url: https://www.theverge.com/rss/index.xml
-    section: 科技人物
+    url: https://techcrunch.com/category/artificial-intelligence/feed/
+    section: AI前沿
     weight: 5
-  - name: TechCrunch
+  - name: The Verge AI
     type: rss
-    url: https://techcrunch.com/feed/
-    section: 科技人物
+    url: https://www.theverge.com/rss/ai-artificial-intelligence/index.xml
+    section: AI前沿
     weight: 5
-  - name: Hacker News
+  - name: The Decoder
     type: rss
-    url: https://hnrss.org/frontpage
-    section: 科技人物
+    url: https://the-decoder.com/feed/
+    section: AI前沿
+    weight: 5
+  - name: Simon Willison
+    type: rss
+    url: https://simonwillison.net/atom/everything/
+    section: AI前沿
+    weight: 4
+  - name: 量子位
+    type: rss
+    url: https://www.qbitai.com/feed
+    section: AI前沿
+    weight: 5
+  - name: MIT Tech Review AI
+    type: rss
+    url: https://www.technologyreview.com/topic/artificial-intelligence/feed
+    section: AI前沿
     weight: 4
 
-  # 直连 X（Twitter）：需要自建 RSSHub 且提供 X 账号 cookie。服务器未装 Node
-  # 且内存吃紧，故默认停用；Google News 人物追踪已能覆盖大佬的重大动态。
-  # 若要启用，见 README「接入 X 动向」。
-  - name: X·Elon Musk
+  # 直连 X（Twitter）：需要自建 RSSHub 且提供 X 账号 cookie。服务器未装 Node22
+  # 且内存吃紧，故默认停用；如需启用见 README「接入 X 动向」。
+  - name: X·OpenAI
     type: rss
-    url: http://127.0.0.1:1200/twitter/user/elonmusk
-    section: 科技人物
-    weight: 7
-    enabled: false
-  - name: X·Sam Altman
-    type: rss
-    url: http://127.0.0.1:1200/twitter/user/sama
-    section: 科技人物
+    url: http://127.0.0.1:1200/twitter/user/OpenAI
+    section: AI前沿
     weight: 7
     enabled: false

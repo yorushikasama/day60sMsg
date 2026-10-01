@@ -45,7 +45,7 @@ PALETTE_STRIP = [CARAMEL, GREEN, BASIL, HONEY, PALE]
 SECTIONS = {
     "国际": {"swatch": GREEN, "accent": GREEN, "label": "国际要闻"},
     "国内": {"swatch": CARAMEL, "accent": CARAMEL, "label": "国内动态"},
-    "科技人物": {"swatch": BASIL, "accent": BASIL_TEXT, "label": "科技 · 大佬动向"},
+    "AI前沿": {"swatch": BASIL, "accent": BASIL_TEXT, "label": "AI 前沿"},
 }
 SECTION_DEFAULT = {"swatch": BASIL, "accent": BASIL_TEXT, "label": None}
 

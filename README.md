@@ -74,59 +74,47 @@ CRON_TZ=Asia/Shanghai
 
 > 旧版 cron 不支持 `CRON_TZ` 的话，把服务器时区设为东八区（`timedatectl set-timezone Asia/Shanghai`）后去掉该行。
 
-## 接入 X（Twitter）大佬动向
+## 接入 X（Twitter）动向（可选）
 
-X 官方 API 每月 200 美元起，直接爬取需要登录态且容易封号。免费且稳定的方案是**自建 RSSHub**，把自己 X 账号的登录凭证转成 RSS：
+X 官方 API 每月 200 美元起，直接爬取需要登录态且容易封号。免费方案是**自建 RSSHub**，
+把自己 X 账号的登录凭证转成 RSS（需 Node.js 22+，内存约需 150–250MB）：
 
 ```bash
-# 1. 在服务器上跑一个 RSSHub
+# 1. 获取 auth_token：浏览器登录 x.com → F12 → Application → Cookies → 复制 auth_token 的值
+# 2. 在服务器上跑一个 RSSHub
 docker run -d --name rsshub -p 1200:1200 \
-  -e TWITTER_AUTH_TOKEN=<你的auth_token> \
-  diygod/rsshub
+  -e TWITTER_AUTH_TOKEN=<你的auth_token> diygod/rsshub
 
-# 2. 获取 auth_token：浏览器登录 x.com → F12 → Application → Cookies → 复制 auth_token 的值
-
-# 3. config.yaml 中把 X·Elon Musk / X·Sam Altman 的 enabled 改为 true，
-#    url 保持 http://127.0.0.1:1200/twitter/user/<用户名> 即可
+# 3. config.yaml 中把 X·OpenAI 等源的 enabled 改为 true
 ```
 
-RSSHub 的输出就是标准 RSS，本程序无需任何改动。想追踪其他人，复制一个 source 条目改用户名即可。
+RSSHub 输出就是标准 RSS，本程序无需任何改动。注意：用自己账号的 cookie 做自动化抓取
+存在被风控的风险，建议使用小号。想追踪其他账号，复制一个 source 条目改用户名即可。
 
 ## 调整内容
 
-- **版块条数**：`config.yaml` 的 `budget`（当前国际 10 / 国内 10 / 科技人物 8，共 28 条）
+- **版块条数**：`config.yaml` 的 `budget`（当前国际 10 / 国内 10 / AI前沿 10，共 30 条）
 - **增删数据源**：`sources` 下增删条目；三种类型：
   - `rss` —— 任意 RSS/Atom
   - `60s` —— 每天60秒读懂世界聚合接口
-  - `gnews` —— Google News 关键词检索（`query` 字段填人名或机构名，如 `Elon Musk`）
+  - `gnews` —— Google News 关键词检索（`query` 字段填主题或机构名，如 `Anthropic`）
 - **AI 供应商**：任何 OpenAI 兼容接口均可，改 `llm.base_url` / `model`
 - **挑选项规则**：`llm.py` 顶部的 `SYSTEM_PROMPT`（编辑价值判断标准）
 
-## 科技版块：大佬动向是怎么来的
+## AI 前沿版块的数据来源
 
-「科技·大佬动向」不依赖爬 X。直连 X 需要登录态、官方 API 每月 200 美元起，
-公共 RSSHub 实例的 Twitter 路由现已普遍关闭，因此采用 **Google News 关键词追踪**：
+该版块由三类源混合构成（共 12 个，见 `config.yaml`）：
 
-- 对马斯克、Sam Altman、黄仁勋、OpenAI、特斯拉等建立 `gnews` 源，
-  按人名/机构名检索全球媒体报道（免费、无需认证、每人约 100 条/天）
-- 大佬有大动作必然上新闻，覆盖度实际上比 X 时间线更全（含媒体报道与解读）
-- `gnews` 类型会自动剥离标题的 `- 媒体名` 后缀，并以真实媒体名（AP News、路透等）作为来源显示
-- The Verge / TechCrunch / Hacker News 作为行业大事的兜底
+- **机构一手信息**：OpenAI 官方博客、Google DeepMind、Hugging Face 的官方 RSS
+- **主题检索**：`gnews` 类型按主题检索全球报道——`Anthropic`、`artificial intelligence`、
+  `AI regulation`。用于覆盖没有可用官方 RSS 的机构（如 Anthropic）与监管动态
+- **媒体解读**：TechCrunch AI、The Verge AI、The Decoder、Simon Willison、量子位、MIT Tech Review
 
-要增删追踪对象，在 `config.yaml` 的科技版块复制一条 `gnews` 源改 `query` 即可。
-如果用自有服务器资源想直连 X，见下节。
+`gnews` 类型会自动剥离标题的 `- 媒体名` 后缀，并以真实媒体名作为来源显示；
+每条候选受 `fetch.max_per_source` 限制（默认 8），避免主题检索条目过多而淹没其他版块。
 
-## 接入 X（Twitter）动向（可选）
-
-服务器需装 Node.js 并跑 RSSHub，对内存有要求（实测 1GB 内存的实例较吃紧）：
-
-```bash
-docker run -d --name rsshub -p 1200:1200 \
-  -e TWITTER_AUTH_TOKEN=<你的auth_token> diygod/rsshub
-```
-
-`auth_token` 获取：浏览器登录 x.com → F12 → Application → Cookies → 复制 `auth_token`。
-然后把 `config.yaml` 中 `X·Elon Musk` 等源的 `enabled` 改为 `true`。
+要调整追踪方向，在 `config.yaml` 的 AI 前沿版块增删条目即可——复制一条 `gnews` 源改
+`query`（如 `Anthropic`、`AI chips`、`open source LLM`），或加一个 AI 媒体的 `rss` 源。
 
 ## 目录结构
 
