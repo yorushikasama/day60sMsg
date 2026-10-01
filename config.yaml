@@ -1,0 +1,111 @@
+# ============================================================
+# day60sMsg 配置文件
+# 每日 9 点：多源抓取 -> AI 挑选 -> 生成邮件 -> QQ 邮箱发送
+# ============================================================
+
+email:
+  # 发件邮箱（QQ 邮箱，password 填 SMTP 授权码，不是 QQ 密码）
+  from_addr: "123456789@qq.com"
+  from_name: "每日要闻速览"
+  to_addrs:
+    - "123456789@qq.com"
+  smtp:
+    host: smtp.qq.com
+    port: 465
+    user: "123456789@qq.com"
+    password: "在这里填QQ邮箱SMTP授权码"
+
+# AI 策展：任何 OpenAI 兼容接口均可（智谱 GLM / DeepSeek / 通义 / 自建中转）
+# 智谱:  base_url: https://open.bigmodel.cn/api/paas/v4   model: glm-4-flash（免费额度大）
+# DeepSeek: base_url: https://api.deepseek.com            model: deepseek-chat
+llm:
+  base_url: https://open.bigmodel.cn/api/paas/v4
+  api_key: ""            # 留空则不启用 AI，自动降级为按来源权重挑选
+  model: glm-4-flash
+  timeout: 120
+  temperature: 0.2
+
+fetch:
+  window_hours: 24       # 只收录最近 N 小时发布的内容（无日期的源不受限）
+  max_per_source: 15     # 每个源最多送入 AI 的候选条数
+  timeout: 15            # 单源请求超时（秒）
+  retries: 2
+
+# 各版块选取条数（AI 挑选时的预算；无 AI 时同样生效）
+budget:
+  国际: 6
+  国内: 6
+  科技人物: 4
+
+# ------------------------------------------------------------
+# 数据源
+#   type: rss   —— 任意 RSS/Atom（含自建 RSSHub 输出）
+#   type: 60s   —— vikiboss/60s 聚合接口（每天60秒读懂世界）
+#   section: 国际 / 国内 / 科技人物
+#   weight: 降级模式(无 AI)时的排序权重，越大越靠前
+#   enabled: false 可临时停用某个源
+# ------------------------------------------------------------
+sources:
+  - name: 每天60秒读懂世界
+    type: 60s
+    url: https://60s.viki.moe/v2/60s
+    section: 国内
+    weight: 8
+    enabled: true
+
+  # ---- 国际 ----
+  - name: BBC World
+    type: rss
+    url: http://feeds.bbci.co.uk/news/world/rss.xml
+    section: 国际
+    weight: 6
+  - name: The Guardian World
+    type: rss
+    url: https://www.theguardian.com/world/rss
+    section: 国际
+    weight: 5
+  - name: Al Jazeera
+    type: rss
+    url: https://www.aljazeera.com/xml/rss/all.xml
+    section: 国际
+    weight: 5
+
+  # ---- 国内（科技/财经媒体兼作国内版块补充）----
+  - name: IT之家
+    type: rss
+    url: https://www.ithome.com/rss/
+    section: 国内
+    weight: 4
+  - name: 少数派
+    type: rss
+    url: https://sspai.com/feed
+    section: 国内
+    weight: 4
+  # 36氪 / 虎嗅的官方 RSS 长期格式错误（实测解析失败），如需接入建议改走自建 RSSHub
+
+  # ---- 科技人物 / X 动向 ----
+  - name: The Verge
+    type: rss
+    url: https://www.theverge.com/rss/index.xml
+    section: 科技人物
+    weight: 5
+  - name: Hacker News
+    type: rss
+    url: https://hnrss.org/frontpage
+    section: 科技人物
+    weight: 4
+
+  # X（Twitter）人物动向：需要自建 RSSHub 并提供自己 X 账号的 cookie，
+  # 配置方法见 README「接入 X 动向」。配好后把 enabled 改为 true。
+  - name: X·Elon Musk
+    type: rss
+    url: http://127.0.0.1:1200/twitter/user/elonmusk
+    section: 科技人物
+    weight: 7
+    enabled: false
+  - name: X·Sam Altman
+    type: rss
+    url: http://127.0.0.1:1200/twitter/user/sama
+    section: 科技人物
+    weight: 7
+    enabled: false

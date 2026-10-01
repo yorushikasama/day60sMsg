@@ -1,0 +1,4 @@
+# 统一行尾：仓库内存 LF，检出时按平台转换；服务器(Linux)得到 LF
+* text=auto
+*.key binary
+*.png binary
