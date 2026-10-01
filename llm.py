@@ -104,18 +104,29 @@ def _llm_curate(items, llm_cfg, budget):
 
 def _chat(llm_cfg, messages):
     base = llm_cfg["base_url"].rstrip("/")
+    payload = {"model": llm_cfg["model"], "messages": messages}
+    # 推理模型（gpt-5.x、o 系列等）通常拒绝 temperature，配置为 null 则不发送
+    temperature = llm_cfg.get("temperature")
+    if temperature is not None:
+        payload["temperature"] = float(temperature)
+
     resp = requests.post(
         f"{base}/chat/completions",
         headers={"Authorization": f"Bearer {llm_cfg['api_key']}"},
-        json={
-            "model": llm_cfg["model"],
-            "messages": messages,
-            "temperature": float(llm_cfg.get("temperature", 0.2)),
-        },
+        json=payload,
         timeout=int(llm_cfg.get("timeout", 120)),
     )
-    resp.raise_for_status()
-    return resp.json()["choices"][0]["message"]["content"]
+    if resp.status_code != 200:
+        # 带出响应体，便于区分鉴权失败 / 模型不可用 / 网关故障
+        raise RuntimeError(f"LLM 接口返回 {resp.status_code}: {resp.text[:300]}")
+    data = resp.json()
+    try:
+        content = data["choices"][0]["message"]["content"]
+    except (KeyError, IndexError) as exc:
+        raise RuntimeError(f"LLM 响应结构异常: {str(data)[:300]}") from exc
+    if not content:
+        raise RuntimeError("LLM 返回内容为空")
+    return content
 
 
 def _extract_json(text):
