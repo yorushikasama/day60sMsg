@@ -26,15 +26,27 @@ OUTPUT_SCHEMA = {
 }
 
 
+def _api_key(cfg):
+    """返回可用的 api_key；空值或仍是中文占位符时返回空串。"""
+    key = str((cfg.get("api_key") or "")).strip()
+    if not key:
+        return ""
+    if not key.isascii():
+        log.warning("LLM api_key 仍是占位符（含非 ASCII 字符），本次使用权重降级挑选")
+        return ""
+    return key
+
+
 def curate(items, cfg):
     """返回 (intro, sections)。sections: [{name, items:[完整条目dict]}]。"""
     budget = cfg.get("budget") or {}
     llm_cfg = cfg.get("llm") or {}
-    if not llm_cfg.get("api_key"):
-        log.info("未配置 LLM api_key，使用权重降级挑选")
+    api_key = _api_key(llm_cfg)
+    if not api_key:
+        log.info("未配置有效的 LLM api_key，使用权重降级挑选")
         return _heuristic(items, budget)
     try:
-        intro, sections = _llm_curate(items, llm_cfg, budget)
+        intro, sections = _llm_curate(items, {**llm_cfg, "api_key": api_key}, budget)
         return intro, sections
     except Exception as exc:
         log.warning("AI 策展失败，降级为权重挑选: %s", exc)
