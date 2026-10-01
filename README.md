@@ -32,6 +32,10 @@ venv/bin/pip install -r requirements.txt      # Windows: venv\Scripts\pip instal
 | `email.smtp.password` | QQ 邮箱 **SMTP 授权码**（不是 QQ 密码），获取方式见下 |
 | `llm.api_key` | 智谱/DeepSeek 等 OpenAI 兼容接口的 key，留空则降级运行 |
 
+> **推荐做法**：不要直接改 `config.yaml`，而是 `cp config.local.example.yaml config.local.yaml`，
+> 把私密值填进 `config.local.yaml`。该文件已被 gitignore，既不会提交、也不会被 `git pull` 覆盖，
+> 只填需要覆盖的字段即可，其余自动沿用 `config.yaml`。
+
 本地验证：
 
 ```bash
@@ -105,10 +109,19 @@ llm.py             AI 策展（挑选/翻译/摘要）+ 无 key 降级
 email_builder.py   HTML/纯文本邮件渲染（全内联样式）
 sender.py          QQ 邮箱 SMTP 发送
 store.py           已推送去重（data/seen.json，滚动 7 天）
-config.yaml        全部配置
+config.yaml        全部配置（可提交）
+config.local.yaml  私密配置覆盖（自动生成，已 gitignore）
 logs/              按月滚动日志
 preview/           --preview 输出
 ```
+
+## 更新已部署的实例
+
+```bash
+cd /opt/day60sMsg && git pull && ./venv/bin/pip install -q -r requirements.txt
+```
+
+`config.local.yaml` 不在版本控制内，`git pull` 不会影响其中的授权码。
 
 ## 常见问题
 

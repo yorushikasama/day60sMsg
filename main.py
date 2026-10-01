@@ -45,9 +45,32 @@ def setup_logging():
     )
 
 
+def _deep_merge(base, override):
+    """递归合并：dict 逐键覆盖，其他类型（含 list）整体替换。"""
+    result = dict(base)
+    for key, value in override.items():
+        if isinstance(value, dict) and isinstance(result.get(key), dict):
+            result[key] = _deep_merge(result[key], value)
+        else:
+            result[key] = value
+    return result
+
+
 def load_config():
+    """读取 config.yaml；若存在 config.local.yaml（已 gitignore）则叠加覆盖。
+
+    这样服务器上的邮箱授权码、API key 等私密配置与代码分离，git pull 不会冲突。
+    """
     with open(os.path.join(BASE_DIR, "config.yaml"), encoding="utf-8") as f:
-        return yaml.safe_load(f)
+        cfg = yaml.safe_load(f)
+
+    local_path = os.path.join(BASE_DIR, "config.local.yaml")
+    if os.path.exists(local_path):
+        with open(local_path, encoding="utf-8") as f:
+            local = yaml.safe_load(f) or {}
+        cfg = _deep_merge(cfg, local)
+        log.debug("已叠加本地配置 %s", local_path)
+    return cfg
 
 
 def _pool():

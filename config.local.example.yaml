@@ -1,0 +1,14 @@
+# 本地私密配置（覆盖 config.yaml），已被 .gitignore 忽略，不会提交、不受 git pull 影响。
+# 用法：只写需要覆盖的字段即可，其余字段自动沿用 config.yaml。
+# 在服务器上：cp config.local.example.yaml config.local.yaml 然后填入真实值。
+
+email:
+  from_addr: "你的QQ号@qq.com"
+  to_addrs:
+    - "你的QQ号@qq.com"
+  smtp:
+    user: "你的QQ号@qq.com"
+    password: "QQ邮箱SMTP授权码（16位，非登录密码）"
+
+llm:
+  api_key: "你的LLM密钥（智谱/DeepSeek等，留空则降级为按来源权重挑选）"
