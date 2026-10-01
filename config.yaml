@@ -22,8 +22,16 @@ llm:
   base_url: https://open.bigmodel.cn/api/paas/v4
   api_key: ""            # 留空则不启用 AI，自动降级为按来源权重挑选
   model: glm-4-flash
+  # 备用模型：主模型重试耗尽后依次尝试。各模型限流额度相互独立，
+  # 某个模型 429 时切换另一个往往立即可用（实测 kimi-k3 限流时 glm-5.2 正常）。
+  fallback_models:
+    - glm-5.2
+    - deepseek-v4-flash
   timeout: 120
   temperature: 0.2
+  retries: 3             # 单个模型的重试次数（针对 429/5xx/超时等可恢复错误）
+  retry_backoff: 5       # 重试基础退避秒数，按 5s/10s/20s 指数递增
+  max_total_seconds: 600 # 全部模型重试的总时限，超过则放弃并降级，确保 9 点前送达
 
 fetch:
   window_hours: 48       # 只收录最近 N 小时发布的内容（无日期的源不受限）。

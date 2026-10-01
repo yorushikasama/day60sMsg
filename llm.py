@@ -2,6 +2,7 @@
 import json
 import logging
 import re
+import time
 
 import requests
 
@@ -78,11 +79,12 @@ def _llm_curate(items, llm_cfg, budget):
         f"候选新闻：\n{json.dumps(candidates, ensure_ascii=False)}"
     )
 
-    content = _chat(llm_cfg, [
+    messages = [
         {"role": "system", "content": SYSTEM_PROMPT},
         {"role": "user", "content": user_prompt},
-    ])
-    data = _extract_json(content)
+    ]
+    # 请求与解析一并纳入重试：模型偶发的格式错误也值得重试
+    data = _call_and_parse(llm_cfg, messages)
     by_id = {it["id"]: it for it in items}
     sections = []
     for sec in data.get("sections", []):
@@ -102,31 +104,104 @@ def _llm_curate(items, llm_cfg, budget):
     return str(data.get("intro", "")).strip(), sections
 
 
-def _chat(llm_cfg, messages):
+def _call_and_parse(llm_cfg, messages):
+    """调用 LLM 并解析 JSON；解析失败按可重试错误处理。"""
+    content = _chat_with_retry(llm_cfg, messages)
+    try:
+        return _extract_json(content)
+    except ValueError as exc:
+        raise LLMError(f"LLM 输出无法解析为 JSON: {exc}", retryable=True) from exc
+
+
+class LLMError(RuntimeError):
+    """LLM 调用失败。retryable 表示该错误值得重试（限流/服务端故障/网络）。"""
+
+    def __init__(self, message, retryable=False, status=None):
+        super().__init__(message)
+        self.retryable = retryable
+        self.status = status
+
+
+def _build_models(llm_cfg):
+    """主模型 + 备用模型（去重，保持顺序）。"""
+    models = [llm_cfg["model"]]
+    for m in llm_cfg.get("fallback_models") or []:
+        if m and m not in models:
+            models.append(m)
+    return models
+
+
+def _chat(llm_cfg, messages, model=None):
+    """单次调用。可恢复错误抛 LLMError(retryable=True)，交由上层重试/切换模型。"""
     base = llm_cfg["base_url"].rstrip("/")
-    payload = {"model": llm_cfg["model"], "messages": messages}
+    payload = {"model": model or llm_cfg["model"], "messages": messages}
     # 推理模型（gpt-5.x、o 系列等）通常拒绝 temperature，配置为 null 则不发送
     temperature = llm_cfg.get("temperature")
     if temperature is not None:
         payload["temperature"] = float(temperature)
 
-    resp = requests.post(
-        f"{base}/chat/completions",
-        headers={"Authorization": f"Bearer {llm_cfg['api_key']}"},
-        json=payload,
-        timeout=int(llm_cfg.get("timeout", 120)),
-    )
+    try:
+        resp = requests.post(
+            f"{base}/chat/completions",
+            headers={"Authorization": f"Bearer {llm_cfg['api_key']}"},
+            json=payload,
+            timeout=int(llm_cfg.get("timeout", 120)),
+        )
+    except requests.RequestException as exc:
+        raise LLMError(f"网络错误: {exc}", retryable=True) from exc
+
     if resp.status_code != 200:
-        # 带出响应体，便于区分鉴权失败 / 模型不可用 / 网关故障
-        raise RuntimeError(f"LLM 接口返回 {resp.status_code}: {resp.text[:300]}")
+        # 429 限流与 5xx 服务端故障可重试；401/403/404 属配置问题，重试无意义
+        retryable = resp.status_code == 429 or resp.status_code >= 500
+        raise LLMError(
+            f"LLM 接口返回 {resp.status_code}: {resp.text[:200]}",
+            retryable=retryable, status=resp.status_code,
+        )
     data = resp.json()
     try:
         content = data["choices"][0]["message"]["content"]
     except (KeyError, IndexError) as exc:
-        raise RuntimeError(f"LLM 响应结构异常: {str(data)[:300]}") from exc
+        raise LLMError(f"LLM 响应结构异常: {str(data)[:300]}") from exc
     if not content:
-        raise RuntimeError("LLM 返回内容为空")
+        raise LLMError("LLM 返回内容为空")
     return content
+
+
+def _chat_with_retry(llm_cfg, messages):
+    """按模型依次尝试；每个模型内部按指数退避重试，用尽后切换到下一个模型。
+
+    各模型的限流额度相互独立，切换模型常能立即绕过 429。
+    设有总时限（max_total_seconds），避免多模型叠加重试拖过发送时间点。
+    """
+    models = _build_models(llm_cfg)
+    retries = max(1, int(llm_cfg.get("retries", 3)))
+    backoff = float(llm_cfg.get("retry_backoff", 5))
+    deadline = time.monotonic() + float(llm_cfg.get("max_total_seconds", 600))
+    last_err = None
+
+    for mi, model in enumerate(models):
+        for attempt in range(1, retries + 1):
+            try:
+                content = _chat(llm_cfg, messages, model=model)
+                if mi or attempt > 1:
+                    log.info("模型 %s 第 %d 次尝试成功", model, attempt)
+                return content
+            except LLMError as exc:
+                last_err = exc
+                if not exc.retryable:
+                    log.warning("模型 %s 不可重试的错误，立即切换: %s", model, exc)
+                    break
+                if attempt < retries:
+                    delay = backoff * (2 ** (attempt - 1))
+                    if time.monotonic() + delay > deadline:
+                        log.warning("已达重试总时限，放弃重试")
+                        raise last_err
+                    log.warning("模型 %s 第 %d/%d 次失败(%s)，%.0fs 后重试",
+                                model, attempt, retries, exc, delay)
+                    time.sleep(delay)
+                else:
+                    log.warning("模型 %s 重试 %d 次均失败，切换下一个模型", model, retries)
+    raise last_err or LLMError("没有可用的模型")
 
 
 def _extract_json(text):
