@@ -105,12 +105,8 @@ def _llm_curate(items, llm_cfg, budget):
 
 
 def _call_and_parse(llm_cfg, messages):
-    """调用 LLM 并解析 JSON；解析失败按可重试错误处理。"""
-    content = _chat_with_retry(llm_cfg, messages)
-    try:
-        return _extract_json(content)
-    except ValueError as exc:
-        raise LLMError(f"LLM 输出无法解析为 JSON: {exc}", retryable=True) from exc
+    """调用 LLM 并解析 JSON；解析失败在重试循环内处理（换模型/重试）。"""
+    return _chat_with_retry(llm_cfg, messages, parse=_extract_json)
 
 
 class LLMError(RuntimeError):
@@ -167,10 +163,11 @@ def _chat(llm_cfg, messages, model=None):
     return content
 
 
-def _chat_with_retry(llm_cfg, messages):
+def _chat_with_retry(llm_cfg, messages, parse=None):
     """按模型依次尝试；每个模型内部按指数退避重试，用尽后切换到下一个模型。
 
     各模型的限流额度相互独立，切换模型常能立即绕过 429。
+    parse 传入时，解析失败也视为可重试错误（模型偶发格式瑕疵很常见）。
     设有总时限（max_total_seconds），避免多模型叠加重试拖过发送时间点。
     """
     models = _build_models(llm_cfg)
@@ -183,9 +180,22 @@ def _chat_with_retry(llm_cfg, messages):
         for attempt in range(1, retries + 1):
             try:
                 content = _chat(llm_cfg, messages, model=model)
+                result = parse(content) if parse else content
                 if mi or attempt > 1:
                     log.info("模型 %s 第 %d 次尝试成功", model, attempt)
-                return content
+                return result
+            except ValueError as exc:
+                # 模型返回了内容但无法解析为 JSON —— 值得换个模型/重试
+                last_err = LLMError(f"输出无法解析: {exc}", retryable=True)
+                if attempt < retries:
+                    delay = backoff * (2 ** (attempt - 1))
+                    if time.monotonic() + delay > deadline:
+                        raise last_err
+                    log.warning("模型 %s 第 %d/%d 次输出无法解析，%.0fs 后重试",
+                                model, attempt, retries, delay)
+                    time.sleep(delay)
+                else:
+                    log.warning("模型 %s 重试 %d 次仍无法解析，切换下一个模型", model, retries)
             except LLMError as exc:
                 last_err = exc
                 if not exc.retryable:
@@ -205,10 +215,23 @@ def _chat_with_retry(llm_cfg, messages):
 
 
 def _extract_json(text):
+    """从模型输出中提取 JSON。容忍 markdown 代码围栏与多余说明文字。"""
+    text = text.strip()
+    # 去掉 ```json ... ``` 围栏
+    fence = re.search(r"```(?:json)?\s*(.+?)```", text, re.S)
+    if fence:
+        text = fence.group(1).strip()
     match = re.search(r"\{.*\}", text, re.S)
     if not match:
-        raise ValueError("LLM 输出中未找到 JSON")
-    return json.loads(match.group(0))
+        raise ValueError("输出中未找到 JSON 对象")
+    raw = match.group(0)
+    try:
+        return json.loads(raw)
+    except json.JSONDecodeError:
+        # 常见瑕疵：尾随逗号、中文全角引号；做一次温和修复后重试
+        fixed = re.sub(r",\s*([}\]])", r"\1", raw)
+        fixed = fixed.replace("“", '"').replace("”", '"')
+        return json.loads(fixed)
 
 
 # ---------------------------------------------------------------- 降级
