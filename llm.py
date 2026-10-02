@@ -92,7 +92,12 @@ def _collapse(items):
         if not any(_similar(key, _norm_title(g["title"])) for g in reps):
             reps.append(it)
     kept_ids = {g["id"] for g in reps}
-    return [it for it in items if it["id"] in kept_ids], len(items) - len(reps)
+    seen_ids, kept = set(), []
+    for it in items:  # 保持原顺序；同 id 的重复条目（如双镜像源）只留一条
+        if it["id"] in kept_ids and it["id"] not in seen_ids:
+            seen_ids.add(it["id"])
+            kept.append(it)
+    return kept, len(items) - len(kept)
 
 
 def _candidate_view(it):
