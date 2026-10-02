@@ -3,10 +3,16 @@ import json
 import logging
 import re
 import time
+from datetime import datetime, timedelta
+from difflib import SequenceMatcher
 
 import requests
 
+from sources import CST
+
 log = logging.getLogger("day60s")
+
+DUP_RATIO = 0.72  # 标题相似度折叠阈值
 
 SYSTEM_PROMPT = (
     "你是一位资深新闻编辑，负责为中文读者制作一份 60 秒可读完的每日要闻简报。"
@@ -38,16 +44,20 @@ def _api_key(cfg):
     return key
 
 
-def curate(items, cfg):
+def curate(items, cfg, recent_titles=()):
     """返回 (intro, sections)。sections: [{name, items:[完整条目dict]}]。"""
     budget = cfg.get("budget") or {}
     llm_cfg = cfg.get("llm") or {}
+    interests = cfg.get("interests") or ()
     api_key = _api_key(llm_cfg)
     if not api_key:
         log.info("未配置有效的 LLM api_key，使用权重降级挑选")
         return _heuristic(items, budget)
     try:
-        intro, sections = _llm_curate(items, {**llm_cfg, "api_key": api_key}, budget)
+        intro, sections = _llm_curate(
+            items, {**llm_cfg, "api_key": api_key}, budget,
+            interests=interests, recent_titles=recent_titles,
+        )
         return intro, sections
     except Exception as exc:
         log.warning("AI 策展失败，降级为权重挑选: %s", exc)
@@ -56,34 +66,51 @@ def curate(items, cfg):
 
 # ---------------------------------------------------------------- LLM
 def _norm_title(title):
-    """标题归一化（去标点、小写、截断），用于跨源去重。"""
-    return re.sub(r"[^\w]", "", str(title).lower())[:30]
+    """标题归一化（去标点、小写），用于跨源/跨天去重。"""
+    return re.sub(r"[^\w]", "", str(title).lower())
 
 
-def _llm_curate(items, llm_cfg, budget):
-    # 近重复折叠：同一事件的多源报道只保留一条进提示词，省 token 且提升多样性
-    seen_keys, collapsed = set(), []
-    for it in items:
+def _similar(a, b):
+    """标题近似判断：共同长前缀直接判重，否则用相似度比率。"""
+    if not a or not b:
+        return False
+    if len(a) >= 12 and len(b) >= 12 and a[:20] == b[:20]:
+        return True
+    return SequenceMatcher(None, a, b).ratio() >= DUP_RATIO
+
+
+def _collapse(items):
+    """近重复折叠：每组只保留发布最新的一条（信息通常最完整）。
+
+    返回 (保留列表[原顺序], 折叠数)。
+    """
+    epoch = datetime.min.replace(tzinfo=CST)
+    ordered = sorted(items, key=lambda i: i.get("published") or epoch, reverse=True)
+    reps = []  # 每组的代表（最新一条）
+    for it in ordered:
         key = _norm_title(it["title"])
-        if key in seen_keys:
-            continue
-        seen_keys.add(key)
-        collapsed.append(it)
-    if len(collapsed) < len(items):
-        log.info("近重复折叠：%d 条候选压缩为 %d 条", len(items), len(collapsed))
-    items = collapsed
+        if not any(_similar(key, _norm_title(g["title"])) for g in reps):
+            reps.append(it)
+    kept_ids = {g["id"] for g in reps}
+    return [it for it in items if it["id"] in kept_ids], len(items) - len(reps)
 
-    candidates = [
-        {
-            "id": it["id"],
-            "section": it["section"],
-            "source": it["source"],
-            "published": it["published"].strftime("%m-%d %H:%M") if it["published"] else "今天",
-            "title": it["title"],
-            "summary": it["summary"],
-        }
-        for it in items
-    ]
+
+def _candidate_view(it):
+    """构造提示词用的候选条目：空字段不输出，压缩 token。"""
+    c = {"id": it["id"], "section": it["section"], "source": it["source"]}
+    c["published"] = (it["published"].strftime("%m-%d %H:%M")
+                      if it.get("published") else "今天")
+    c["title"] = it["title"]
+    if it.get("summary"):
+        c["summary"] = it["summary"]
+    return c
+
+
+def _llm_curate(items, llm_cfg, budget, interests=(), recent_titles=()):
+    kept, collapsed_n = _collapse(items)
+    if collapsed_n:
+        log.info("近重复折叠：%d 条候选压缩为 %d 条", len(items), len(kept))
+    candidates = [_candidate_view(it) for it in kept]
     user_prompt = (
         "下面是今天抓取到的候选新闻(JSON)。请挑选最有价值的信息，输出格式如下：\n"
         f"{json.dumps(OUTPUT_SCHEMA, ensure_ascii=False, indent=1)}\n\n"
@@ -94,9 +121,20 @@ def _llm_curate(items, llm_cfg, budget):
         "3. summary 为 45 字以内的中文摘要，只保留最重要的信息（谁、做了什么、关键数字/结果）。\n"
         "4. items 按重要性从高到低排序；版块名必须与候选中的 section 完全一致。\n"
         "5. 同一事件只能出现一次：若多个候选描述同一事件（措辞或来源不同），"
-        "只选信息最完整、来源最权威的一条，其余舍弃。\n\n"
-        f"候选新闻：\n{json.dumps(candidates, ensure_ascii=False)}"
+        "只选信息最完整、来源最权威的一条，其余舍弃。\n"
     )
+    if interests:
+        user_prompt += (
+            "6. 读者特别关注这些主题：" + "、".join(interests) + "。"
+            "重要性相近时，优先选择与关注主题相关的条目。\n"
+        )
+    if recent_titles:
+        user_prompt += (
+            "近两天已推送过的主题（不要重复选择；若是重大新进展可以选用，"
+            "并在 summary 末尾标注[续报]）：\n- "
+            + "\n- ".join(recent_titles) + "\n"
+        )
+    user_prompt += f"\n候选新闻：\n{json.dumps(candidates, ensure_ascii=False)}"
 
     messages = [
         {"role": "system", "content": SYSTEM_PROMPT},
@@ -119,6 +157,7 @@ def _llm_curate(items, llm_cfg, budget):
                 continue
             picked_titles.add(key)
             picked.append({**it,
+                           "orig_title": it["title"],  # 原始标题，供跨天主题去重
                            "title": str(row.get("title") or it["title"]).strip(),
                            "summary": str(row.get("summary") or it["summary"]).strip()})
         if name and picked:
@@ -159,6 +198,9 @@ def _chat(llm_cfg, messages, model=None):
     temperature = llm_cfg.get("temperature")
     if temperature is not None:
         payload["temperature"] = float(temperature)
+    max_tokens = llm_cfg.get("max_tokens")
+    if max_tokens:
+        payload["max_tokens"] = int(max_tokens)
 
     try:
         resp = requests.post(
@@ -185,6 +227,16 @@ def _chat(llm_cfg, messages, model=None):
     if not content:
         raise LLMError("LLM 返回内容为空")
     return content
+
+
+def chat_json(llm_cfg, system, user):
+    """供其他模块（周报等）使用的通用对话入口：带重试/故障转移，返回解析后的 JSON。"""
+    api_key = _api_key(llm_cfg)
+    if not api_key:
+        raise RuntimeError("LLM api_key 未配置")
+    return _call_and_parse({**llm_cfg, "api_key": api_key},
+                           [{"role": "system", "content": system},
+                            {"role": "user", "content": user}])
 
 
 def _chat_with_retry(llm_cfg, messages, parse=None):

@@ -21,12 +21,18 @@ def _smtp_password(smtp):
 
 
 def send_email(cfg, subject, html_text, plain_text, retries=3):
-    """发送 HTML 邮件，失败自动重试（瞬时网络抖动不应导致漏发一天）。"""
+    """发送 HTML 邮件，失败自动重试（瞬时网络抖动不应导致漏发一天）。
+
+    认证失败（授权码错误）属永久错误，不重试。
+    """
     last = None
     for attempt in range(1, retries + 1):
         try:
             _send(cfg, subject, html_text, plain_text)
             return
+        except smtplib.SMTPAuthenticationError as exc:
+            log.error("SMTP 认证失败（不重试）: %s", exc)
+            raise
         except (smtplib.SMTPException, OSError) as exc:
             last = exc
             if attempt < retries:
@@ -37,15 +43,22 @@ def send_email(cfg, subject, html_text, plain_text, retries=3):
     raise last
 
 
+def _build_message(cfg, subject):
+    email_cfg = cfg["email"]
+    msg = EmailMessage()
+    msg["Subject"] = subject
+    msg["From"] = formataddr((email_cfg.get("from_name", ""), email_cfg["from_addr"]))
+    msg["To"] = ", ".join(email_cfg["to_addrs"])
+    msg["Auto-Submitted"] = "auto-generated"  # 告知自动回复类服务不要回信
+    return msg
+
+
 def _send(cfg, subject, html_text, plain_text):
     email_cfg = cfg["email"]
     smtp = email_cfg["smtp"]
     password = _smtp_password(smtp)
 
-    msg = EmailMessage()
-    msg["Subject"] = subject
-    msg["From"] = formataddr((email_cfg.get("from_name", ""), email_cfg["from_addr"]))
-    msg["To"] = ", ".join(email_cfg["to_addrs"])
+    msg = _build_message(cfg, subject)
     msg.set_content(plain_text)
     msg.add_alternative(html_text, subtype="html")
 
@@ -61,10 +74,7 @@ def send_alert(cfg, subject, body):
     smtp = email_cfg["smtp"]
     password = _smtp_password(smtp)
 
-    msg = EmailMessage()
-    msg["Subject"] = subject
-    msg["From"] = formataddr((email_cfg.get("from_name", ""), email_cfg["from_addr"]))
-    msg["To"] = ", ".join(email_cfg["to_addrs"])
+    msg = _build_message(cfg, subject)
     msg.set_content(body)
 
     with smtplib.SMTP_SSL(smtp["host"], int(smtp["port"]), timeout=30) as server:

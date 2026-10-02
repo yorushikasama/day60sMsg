@@ -15,6 +15,26 @@ email:
     user: "123456789@qq.com"
     password: "在这里填QQ邮箱SMTP授权码"
 
+# 个人关注主题：重要性相近时 AI 会优先挑选相关条目（留空表示无偏好）
+interests: []
+# 例: ["人工智能", "芯片", "新能源"]
+
+# 头条推送：策展发送成功后，把最重要 N 条推到手机（尽力而为，失败不影响邮件）
+push:
+  enabled: false
+  top_n: 5
+  channels:
+    # ntfy（推荐，无需注册，App 订阅同名主题即可）:
+    # ntfy:
+    #   url: https://ntfy.sh/起一个别人猜不到的私有主题名
+    # bark（iOS）:
+    # bark:
+    #   url: https://api.day.app/你的BarkKey
+    # telegram:
+    # telegram:
+    #   bot_token: "123456:ABC"
+    #   chat_id: "你的chat_id"
+
 # AI 策展：任何 OpenAI 兼容接口均可（智谱 GLM / DeepSeek / 通义 / 自建中转）
 # 智谱:  base_url: https://open.bigmodel.cn/api/paas/v4   model: glm-4-flash（免费额度大）
 # DeepSeek: base_url: https://api.deepseek.com            model: deepseek-chat
@@ -30,6 +50,7 @@ llm:
   retries: 3             # 单个模型的重试次数（针对 429/5xx/超时等可恢复错误）
   retry_backoff: 5       # 重试基础退避秒数，按 5s/10s/20s 指数递增
   max_total_seconds: 600 # 全部模型重试的总时限，超过则放弃并降级，确保 9 点前送达
+  max_tokens: null       # 可选：限制输出长度（防止部分模型默认输出过小导致 JSON 截断）
 
 fetch:
   window_hours: 48       # 只收录最近 N 小时发布的内容（无日期的源不受限）。

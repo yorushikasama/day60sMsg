@@ -43,6 +43,8 @@ python main.py --crawl        # 抓取一轮并入候选池
 python main.py --preview      # 从候选池策展，生成 preview/preview.html（浏览器打开看效果，不发邮件）
 python main.py --send-test    # 真实发送一封（验证 SMTP 配置），不记录去重、不清池
 python main.py --send-if-needed  # 仅当今天尚未发送时执行发送（补偿 cron 用）
+python main.py --weekly       # 汇总近 7 天存档，生成一周综述邮件（可选，见下）
+python main.py --status       # 查看运行状态：上次发送、池规模、去重库、存档、报错
 python main.py --dry-run      # 只抓取，打印各源统计，不写任何状态
 python main.py --send         # 正式流程：补抓 → 策展 → 发送 → 去重记录（裸跑 python main.py 等价）
 ```
@@ -98,9 +100,50 @@ docker run -d --name rsshub -p 1200:1200 \
 RSSHub 输出就是标准 RSS，本程序无需任何改动。注意：用自己账号的 cookie 做自动化抓取
 存在被风控的风险，建议使用小号。想追踪其他账号，复制一个 source 条目改用户名即可。
 
+## 策展质量的精修机制
+
+- **近重复折叠**：标题相似（共同长前缀或相似度 ≥0.72）的候选只保留发布最新的一条进提示词，同一事件的多源报道不再重复消耗注意力
+- **跨版块防重**：提示词与结果回映射双层防护，同一事件不会在两个版块出现两次
+- **跨天主题去重**：去重库同时记录条目 id 与主题标题（各留 7 天），近 2 天推送过的主题不再入选
+- **续报标注**：提示词会带上近 2 天已推送主题，重大新进展可入选并自动标注[续报]
+- **兴趣权重**：`config.yaml` 的 `interests: ["人工智能", "芯片"]`，同等重要性下 AI 优先挑选相关条目
+
+## 头条推送（可选）
+
+策展发送成功后，把最重要 N 条推到手机（`config.yaml` 的 `push` 段）：
+
+```yaml
+push:
+  enabled: true
+  top_n: 5
+  channels:
+    ntfy:                                  # 推荐：无需注册，手机装 ntfy App 订阅同名主题
+      url: https://ntfy.sh/起一个别人猜不到的私有主题名
+    # bark:                                # iOS Bark
+    #   url: https://api.day.app/你的BarkKey
+    # telegram:
+    #   bot_token: "123456:ABC"
+    #   chat_id: "你的chat_id"
+```
+
+推送尽力而为：任何渠道失败只记日志，不影响邮件。
+
+## 周报（可选）
+
+`python main.py --weekly` 会读取近 7 天的每日存档（`data/archive/`），由 AI 提炼 3~5 条本周主线发送综述邮件。想自动化可在 crontab 加一行（周日晚 20:30）：
+
+```cron
+30 20 * * 0    cd /opt/day60sMsg && ./venv/bin/python main.py --weekly >> /dev/null 2>> logs/cron.err
+```
+
+## 每日存档与自产订阅
+
+每次正式发送后自动写 `data/archive/YYYY-MM-DD.html`（当天邮件）与 `data/feed.xml`（Atom 订阅），`data/archive/index.html` 是全部往期的索引。
+
 ## 调整内容
 
 - **版块条数**：`config.yaml` 的 `budget`（当前国际 10 / 国内 10 / AI前沿 10，共 30 条）
+- **输出长度**：`llm.max_tokens`（可选，防止部分模型默认输出过小导致 JSON 截断）
 - **增删数据源**：`sources` 下增删条目；三种类型：
   - `rss` —— 任意 RSS/Atom
   - `60s` —— 每天60秒读懂世界聚合接口

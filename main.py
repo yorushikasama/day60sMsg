@@ -15,13 +15,15 @@ import json
 import logging
 import os
 import sys
-from datetime import datetime
+from datetime import datetime, timedelta
 
 import yaml
 
 import email_builder
 import llm
 import sources
+import archive
+import push
 from pool import CandidatePool
 from sender import send_alert, send_email
 from store import SeenStore
@@ -34,6 +36,13 @@ _INTENT = None  # 本次运行意图（send/crawl/preview/dry），失败告警�
 
 
 def setup_logging():
+    # cron.err 只装报错堆栈，超过 2MB 轮转一次
+    err_log = os.path.join(BASE_DIR, "logs", "cron.err")
+    try:
+        if os.path.exists(err_log) and os.path.getsize(err_log) > 2 * 1024 * 1024:
+            os.replace(err_log, err_log + ".1")
+    except OSError:
+        pass
     log_dir = os.path.join(BASE_DIR, "logs")
     os.makedirs(log_dir, exist_ok=True)
     logging.basicConfig(
@@ -78,7 +87,7 @@ def load_config():
 
 def _pool(cfg):
     """候选池保留期 = 抓取窗口 + 12h 余量，必须 >= 窗口，否则窗口配置被架空。"""
-    retain = int(cfg["fetch"].get("window_hours", 24)) + 12
+    retain = int((cfg.get("fetch") or {}).get("window_hours", 24)) + 12
     return CandidatePool(os.path.join(BASE_DIR, "data", "pool.json"), retain_hours=retain)
 
 
@@ -109,16 +118,20 @@ def curate_from_pool(cfg, use_llm=True, topup=True):
         raise RuntimeError("候选池为空且补抓失败，无法策展")
     tip = next((i.get("_tip") for i in items if i.get("_tip")), "")
 
-    items = _seen().filter_new(items)
+    seen = _seen()
+    items = seen.filter_new(items)
     items = sources.filter_fresh(items, cfg)
+    items = seen.filter_by_title(items, days=2)  # 跨天主题去重
     if not items:
         raise RuntimeError("24 小时窗口内没有新内容，跳过本次推送")
     log.info("候选条目共 %d 条，开始策展", len(items))
 
+    recent_titles = seen.recent_titles(days=2)
     llm_cfg = cfg.get("llm") or {}
     if not use_llm:
         llm_cfg = {**llm_cfg, "api_key": ""}
-    intro, sections = llm.curate(items, {**cfg, "llm": llm_cfg})
+    intro, sections = llm.curate(items, {**cfg, "llm": llm_cfg},
+                                 recent_titles=recent_titles)
 
     # 按 budget 键序排定版块顺序，不依赖 LLM 的返回顺序
     order = list((cfg.get("budget") or {}).keys())
@@ -199,6 +212,77 @@ def _release_lock():
         pass
 
 
+def cmd_status(cfg):
+    """只读状态一览：发送记录、池规模、去重库、存档、配置摘要。"""
+    llm_cfg = cfg.get("llm") or {}
+    print("== day60sMsg 运行状态 ==")
+    print("时间      :", datetime.now(CST).strftime("%Y-%m-%d %H:%M:%S %Z"))
+    print("今日已发送:", "是" if _sent_today() else "否")
+    try:
+        with open(_data_path("last_sent.json"), encoding="utf-8") as f:
+            print("上次发送  :", json.load(f).get("at"))
+    except (OSError, ValueError):
+        print("上次发送  : 无记录")
+    pool = _pool(cfg)
+    print(f"候选池    : {len(pool.entries)} 条（保留 {pool.retain_hours:.0f}h）")
+    seen = _seen()
+    print(f"去重库    : {len(seen.records)} 条 id / {len(seen.titles)} 个主题")
+    adir = os.path.join(BASE_DIR, "data", "archive")
+    days = [f for f in sorted(os.listdir(adir)) if f.endswith(".json")] if os.path.isdir(adir) else []
+    print(f"存档      : {len(days)} 天" + (f"（{days[0][:10]} ~ {days[-1][:10]}）" if days else ""))
+    enabled = [s["name"] for s in cfg["sources"] if s.get("enabled", True)]
+    print(f"数据源    : {len(enabled)} 个启用 / {len(cfg['sources'])} 个配置")
+    print("LLM       :", llm_cfg.get("model"), "| 备用:", llm_cfg.get("fallback_models"))
+    print("兴趣主题  :", cfg.get("interests") or "未配置")
+    pch = (cfg.get("push") or {}).get("channels") or {}
+    print("推送渠道  :", ("、".join(pch) if pch else "未配置") +
+          ("（已启用）" if (cfg.get("push") or {}).get("enabled") else "（未启用）"))
+    err_log = os.path.join(BASE_DIR, "logs", "cron.err")
+    if os.path.exists(err_log) and os.path.getsize(err_log):
+        print("\n== cron.err 末尾 ==")
+        with open(err_log, encoding="utf-8", errors="replace") as f:
+            print("".join(f.readlines()[-8:]))
+
+
+def cmd_weekly(cfg, now, use_llm=True):
+    """汇总近 7 天存档，生成一周综述邮件。"""
+    archives = archive.load_recent_archives(7)
+    if not archives:
+        raise RuntimeError("近 7 天没有可用的每日存档，无法生成周报")
+    lines = []
+    for day in archives:
+        for sec in day.get("sections", []):
+            for it in sec.get("items", []):
+                lines.append(f"[{day.get('date')}] {it.get('title')}")
+    log.info("周报素材：%d 天共 %d 条头条", len(archives), len(lines))
+
+    llm_cfg = cfg.get("llm") or {}
+    if not use_llm:
+        llm_cfg = {**llm_cfg, "api_key": ""}
+    system = ("你是资深新闻编辑。基于一周内每天推送过的头条，写一份本周综述："
+              "提炼 3~5 条主线（而非逐条罗列），说明趋势与关联。")
+    user = ("一周头条（按天）：\n- " + "\n- ".join(lines) +
+            "\n\n输出 JSON：{\"intro\":\"本周一句话总览，60字以内\","
+            "\"highlights\":[{\"title\":\"主线标题\",\"detail\":\"120字以内的综述\"}]}")
+    data = llm.chat_json(llm_cfg, system, user)
+    highlights = data.get("highlights") or []
+    if not highlights:
+        raise RuntimeError("周报未生成有效内容")
+
+    sections = [{"name": "一周综述",
+                 "items": [{"id": f"w{i}", "title": str(h.get("title", ""))[:80],
+                            "summary": str(h.get("detail", "")),
+                            "source": "day60sMsg 周报", "url": "", "published": None}
+                           for i, h in enumerate(highlights, 1)]}]
+    intro = str(data.get("intro", "")).strip()
+    start = (now - timedelta(days=6)).strftime("%m-%d")
+    subject = f"每周要闻综述 | {start} ~ {now:%m-%d}"
+    html_text = email_builder.build_html(now, intro, sections)
+    send_email(cfg, subject, html_text, email_builder.build_plain(intro, sections))
+    archive.save_archive(now, sections, html_text)
+    log.info("周报已发送并存档")
+
+
 def main():
     global _INTENT
     parser = argparse.ArgumentParser(description="每日要闻速览：分时段抓取 + 定时策展发送")
@@ -209,10 +293,14 @@ def main():
                        help="仅当今天尚未发送时执行 --send（补偿 cron 用）")
     parser.add_argument("--preview", action="store_true", help="只生成 preview/preview.html")
     parser.add_argument("--send-test", action="store_true", help="发送验证，不记录去重、不清池")
+    parser.add_argument("--weekly", action="store_true", help="汇总近 7 天存档，生成周报邮件")
+    parser.add_argument("--status", action="store_true", help="查看运行状态（不抓取不发送）")
     parser.add_argument("--dry-run", action="store_true", help="只抓取并打印统计")
     parser.add_argument("--no-llm", action="store_true", help="跳过 AI，使用权重挑选")
     args = parser.parse_args()
-    _INTENT = "crawl" if args.crawl else "dry" if args.dry_run else "preview" if args.preview else "send"
+    _INTENT = ("crawl" if args.crawl else "dry" if args.dry_run else "preview" if args.preview
+               else "weekly" if args.weekly else "status" if args.status
+               else "send_test" if args.send_test else "send")
 
     setup_logging()
     if not _acquire_lock():
@@ -234,6 +322,14 @@ def main():
     if args.crawl:
         cmd_crawl(cfg)
         log.info("抓取入池完成")
+        return
+
+    if args.status:
+        cmd_status(cfg)
+        return
+
+    if args.weekly:
+        cmd_weekly(cfg, now, use_llm=not args.no_llm)
         return
 
     if args.send_if_needed:
@@ -264,6 +360,9 @@ def main():
         _seen().mark_seen([it for sec in sections for it in sec["items"]])
         pool.clear()
         _mark_sent()
+        archive.save_archive(now, sections, html_text)
+        archive.write_feed(now, sections)
+        push.push_digest(cfg, sections)  # 尽力而为，失败不影响邮件
     log.info("本次运行完成")
 
 
