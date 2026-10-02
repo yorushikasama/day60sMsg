@@ -1,6 +1,7 @@
 """已推送条目去重：data/seen.json 滚动保留 7 天。"""
 import json
 import logging
+import os
 from datetime import datetime, timedelta
 
 log = logging.getLogger("day60s")
@@ -14,7 +15,16 @@ class SeenStore:
         try:
             with open(path, encoding="utf-8") as f:
                 self.records = json.load(f)
-        except (FileNotFoundError, json.JSONDecodeError):
+        except FileNotFoundError:
+            self.records = {}
+        except json.JSONDecodeError:
+            # 损坏时留档重建，避免静默清空导致整池旧文重发
+            stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+            try:
+                os.rename(self.path, f"{self.path}.corrupt-{stamp}")
+                log.warning("seen.json 损坏，已留档为 %s.corrupt-%s 并重新开始", path, stamp)
+            except OSError:
+                log.warning("seen.json 损坏且无法留档，已重新开始")
             self.records = {}
 
     def filter_new(self, items):

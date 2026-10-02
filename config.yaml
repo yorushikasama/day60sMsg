@@ -22,11 +22,9 @@ llm:
   base_url: https://open.bigmodel.cn/api/paas/v4
   api_key: ""            # 留空则不启用 AI，自动降级为按来源权重挑选
   model: glm-4-flash
-  # 备用模型：主模型重试耗尽后依次尝试。各模型限流额度相互独立，
-  # 某个模型 429 时切换另一个往往立即可用（实测 kimi-k3 限流时 glm-5.2 正常）。
-  fallback_models:
-    - glm-5.2
-    - deepseek-v4-flash
+  # 备用模型：主模型重试耗尽后依次尝试（各模型限流额度相互独立）。
+  # 需与 base_url 对应的服务商匹配。示例（SenseNova）: [glm-5.2, kimi-k3]
+  fallback_models: []
   timeout: 120
   temperature: 0.2
   retries: 3             # 单个模型的重试次数（针对 429/5xx/超时等可恢复错误）
@@ -59,6 +57,13 @@ sources:
   - name: 每天60秒读懂世界
     type: 60s
     url: https://60s.viki.moe/v2/60s
+    section: 国内
+    weight: 8
+    enabled: true
+  # 备用镜像：主源失败时兜底（两者数据相同，按标题去重不会重复推送）
+  - name: 每天60秒读懂世界(备用)
+    type: 60s
+    url: https://60s-api.viki.moe/v2/60s
     section: 国内
     weight: 8
     enabled: true
