@@ -4,7 +4,7 @@
   python main.py --crawl      # 只抓取并入候选池（供 cron 分时段调用，如每 3 小时）
   python main.py --send       # 补抓一次 -> 从池中策展 -> 发送（供 cron 每天 8:45 调用）
   python main.py              # 与 --send 相同
-  python main.py --preview    # 策展后只生成 preview/preview.html，不发送、不改状态
+  python main.py --preview    # 策展并生成 preview/preview.html（补抓会照常入池；不发送、不记录去重）
   python main.py --send-test  # 发送验证 SMTP，不记录去重、不清池
   python main.py --dry-run    # 只抓取并打印统计，不写任何状态
   python main.py --no-llm     # 本次跳过 AI，使用权重降级挑选
@@ -73,8 +73,10 @@ def load_config():
     return cfg
 
 
-def _pool():
-    return CandidatePool(os.path.join(BASE_DIR, "data", "pool.json"))
+def _pool(cfg):
+    """候选池保留期 = 抓取窗口 + 12h 余量，必须 >= 窗口，否则窗口配置被架空。"""
+    retain = int(cfg["fetch"].get("window_hours", 24)) + 12
+    return CandidatePool(os.path.join(BASE_DIR, "data", "pool.json"), retain_hours=retain)
 
 
 def _seen():
@@ -86,12 +88,12 @@ def cmd_crawl(cfg):
     items = sources.fetch_all(cfg)
     if not items:
         raise RuntimeError("本次抓取所有源均失败，未入池任何内容")
-    _pool().merge(items)
+    _pool(cfg).merge(items)
 
 
 def curate_from_pool(cfg, use_llm=True, topup=True):
     """补抓并入池 -> 去重 -> 时间窗过滤 -> AI 策展。返回 (intro, sections, tip, pool)。"""
-    pool = _pool()
+    pool = _pool(cfg)
     if topup:  # 发送前最后补抓一轮，把最近几小时的新闻捞进来
         fresh = sources.fetch_all(cfg)
         if fresh:
@@ -114,6 +116,10 @@ def curate_from_pool(cfg, use_llm=True, topup=True):
     if not use_llm:
         llm_cfg = {**llm_cfg, "api_key": ""}
     intro, sections = llm.curate(items, {**cfg, "llm": llm_cfg})
+
+    # 按 budget 键序排定版块顺序，不依赖 LLM 的返回顺序
+    order = list((cfg.get("budget") or {}).keys())
+    sections.sort(key=lambda s: order.index(s["name"]) if s["name"] in order else len(order))
     return intro, sections, tip, pool
 
 

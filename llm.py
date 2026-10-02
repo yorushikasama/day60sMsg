@@ -55,7 +55,24 @@ def curate(items, cfg):
 
 
 # ---------------------------------------------------------------- LLM
+def _norm_title(title):
+    """标题归一化（去标点、小写、截断），用于跨源去重。"""
+    return re.sub(r"[^\w]", "", str(title).lower())[:30]
+
+
 def _llm_curate(items, llm_cfg, budget):
+    # 近重复折叠：同一事件的多源报道只保留一条进提示词，省 token 且提升多样性
+    seen_keys, collapsed = set(), []
+    for it in items:
+        key = _norm_title(it["title"])
+        if key in seen_keys:
+            continue
+        seen_keys.add(key)
+        collapsed.append(it)
+    if len(collapsed) < len(items):
+        log.info("近重复折叠：%d 条候选压缩为 %d 条", len(items), len(collapsed))
+    items = collapsed
+
     candidates = [
         {
             "id": it["id"],
@@ -75,7 +92,9 @@ def _llm_curate(items, llm_cfg, budget):
         "2. 只能选择给定 id 的条目，标题和摘要必须忠于原文，禁止编造细节；"
         "原文是英文的必须翻译成中文。\n"
         "3. summary 为 45 字以内的中文摘要，只保留最重要的信息（谁、做了什么、关键数字/结果）。\n"
-        "4. items 按重要性从高到低排序；版块名必须与候选中的 section 完全一致。\n\n"
+        "4. items 按重要性从高到低排序；版块名必须与候选中的 section 完全一致。\n"
+        "5. 同一事件只能出现一次：若多个候选描述同一事件（措辞或来源不同），"
+        "只选信息最完整、来源最权威的一条，其余舍弃。\n\n"
         f"候选新闻：\n{json.dumps(candidates, ensure_ascii=False)}"
     )
 
@@ -86,6 +105,7 @@ def _llm_curate(items, llm_cfg, budget):
     # 请求与解析一并纳入重试：模型偶发的格式错误也值得重试
     data = _call_and_parse(llm_cfg, messages)
     by_id = {it["id"]: it for it in items}
+    picked_titles = set()  # 跨版块防重：同一事件不重复出现
     sections = []
     for sec in data.get("sections", []):
         name = str(sec.get("name", "")).strip()
@@ -94,6 +114,10 @@ def _llm_curate(items, llm_cfg, budget):
             it = by_id.get(str(row.get("id", "")))
             if not it:
                 continue
+            key = _norm_title(it["title"])
+            if key in picked_titles:
+                continue
+            picked_titles.add(key)
             picked.append({**it,
                            "title": str(row.get("title") or it["title"]).strip(),
                            "summary": str(row.get("summary") or it["summary"]).strip()})
@@ -236,7 +260,7 @@ def _extract_json(text):
 
 # ---------------------------------------------------------------- 降级
 def _heuristic(items, budget):
-    """无 AI 时：按 权重*来源去重 排序，直接截取预算条数。"""
+    """无 AI 时：按来源权重排序选取，并做跨版块标题去重。"""
     used_titles, sections = set(), []
     for name, limit in budget.items():
         pool = sorted(
@@ -247,9 +271,12 @@ def _heuristic(items, budget):
         for it in pool:
             if len(picked) >= limit:
                 break
+            key = _norm_title(it["title"])
+            if key in used_titles:
+                continue  # 同一事件已在其他版块出现
+            used_titles.add(key)
             picked.append(it)
         if picked:
             sections.append({"name": name, "items": picked})
-            used_titles.add(picked[0]["title"])
     intro = sections[0]["items"][0]["title"] if sections else "今日暂无精选内容"
     return intro, sections

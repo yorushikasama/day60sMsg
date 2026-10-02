@@ -65,7 +65,8 @@ def _vol(now):
 def build_html(now, intro, sections, tip=""):
     date_line = f"{now.year}年{now.month}月{now.day}日 · {WEEKDAYS[now.weekday()]} · 第{_vol(now)}期"
     first_title = next((s["items"][0]["title"] for s in sections if s["items"]), "")
-    preheader = _esc(f"{intro or first_title}")[:90]
+    # 先截断原文再转义：转义后切片会把 &#x2026; 之类实体切成半截
+    preheader = _esc((intro or first_title)[:90])
 
     parts = [
         '<!DOCTYPE html><html lang="zh-CN"><head><meta charset="utf-8">',

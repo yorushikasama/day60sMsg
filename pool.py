@@ -2,7 +2,8 @@
 
 - merge 按 id 去重，新条目记录首次入池时间
 - 无发布时间的条目（如 60s 一句话新闻）以首次入池时间视为发布时间
-- 超过 RETAIN_HOURS 的条目自动清理
+- 超过保留期的条目自动清理；保留期由调用方按抓取窗口推导（窗口 + 余量），
+  必须大于等于 fetch.window_hours，否则会把窗口内的条目提前裁掉
 """
 import json
 import logging
@@ -13,12 +14,13 @@ from sources import CST
 
 log = logging.getLogger("day60s")
 
-RETAIN_HOURS = 36  # 选择窗口 24h + 余量
+RETAIN_HOURS = 36  # 仅作为未显式传入时的默认值；主流程按 window_hours+12 传入
 
 
 class CandidatePool:
-    def __init__(self, path):
+    def __init__(self, path, retain_hours=RETAIN_HOURS):
         self.path = path
+        self.retain_hours = float(retain_hours)
         self.entries = {}  # id -> {"first_seen": iso, "item": {...}}
         try:
             with open(path, encoding="utf-8") as f:
@@ -32,7 +34,7 @@ class CandidatePool:
     def merge(self, items):
         """并入新条目，返回新增数量。重复条目保留最早的首次入池时间。"""
         now = datetime.now(CST).isoformat(timespec="seconds")
-        cutoff = datetime.now(CST) - timedelta(hours=RETAIN_HOURS)
+        cutoff = datetime.now(CST) - timedelta(hours=self.retain_hours)
         added = 0
         for it in items:
             if it["id"] in self.entries:
@@ -61,7 +63,7 @@ class CandidatePool:
         self._save()
 
     def _prune(self):
-        cutoff = datetime.now(CST) - timedelta(hours=RETAIN_HOURS)
+        cutoff = datetime.now(CST) - timedelta(hours=self.retain_hours)
         drop = [
             key for key, e in self.entries.items()
             if (e["item"].get("published") or datetime.fromisoformat(e["first_seen"])) < cutoff
