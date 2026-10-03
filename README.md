@@ -170,16 +170,22 @@ push:
 ## 目录结构
 
 ```
-main.py            主流程与命令行入口（--crawl 入池 / --send 策展发送）
+main.py            命令行入口：参数解析与调度（薄壳）
+config.py          配置加载（config.yaml + config.local.yaml 私密叠加）
+pipeline.py        执行编排：抓取、策展、日发送流水线、周报、状态
 sources.py         多源抓取、归一化、时间窗过滤
-pool.py            候选池（data/pool.json）：分时段累积、去重、过期清理
-llm.py             AI 策展（挑选/翻译/摘要）+ 无 key 降级
+pool.py            候选池：分时段累积、去重、过期清理
+llm.py             AI 策展（挑选/翻译/摘要）+ 重试/故障转移 + 降级
 email_builder.py   HTML/纯文本邮件渲染（全内联样式）
-sender.py          QQ 邮箱 SMTP 发送
-store.py           已推送去重（data/seen.json，滚动 7 天）
+sender.py          SMTP 发送（重试）与告警邮件
+push.py            ntfy/Bark/Telegram 头条推送
+archive.py         每日存档（html+json）、索引页、Atom 订阅
+store.py           去重库（条目 id + 主题标题，滚动 7 天）
+state.py           运行锁、今日已发/告警标记
+alerting.py        失败告警（读日志尾部发邮件，每日最多一封）
 config.yaml        全部配置（可提交）
 config.local.yaml  私密配置覆盖（自动生成，已 gitignore）
-logs/              按月滚动日志
+logs/              按月滚动日志（cron.err 只装堆栈）
 preview/           --preview 输出
 ```
 
