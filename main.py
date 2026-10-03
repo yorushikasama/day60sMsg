@@ -2,7 +2,7 @@
 
 用法：
   python main.py --crawl      # 只抓取并入候选池（供 cron 分时段调用，如每 3 小时）
-  python main.py --send       # 补抓一次 -> 从池中策展 -> 发送（供 cron 每天 8:45 调用）
+  python main.py --send       # 补抓 -> 策展 -> 等到 send_at(默认09:00)准点发送（cron 8:45 触发）
   python main.py --send-if-needed  # 仅当今天尚未发送时执行 --send（供补偿 cron 调用）
   python main.py              # 与 --send 相同
   python main.py --preview    # 策展并生成 preview/preview.html（补抓会照常入池；不发送、不记录去重）
@@ -15,6 +15,7 @@ import json
 import logging
 import os
 import sys
+import time
 from datetime import datetime, timedelta
 
 import yaml
@@ -212,6 +213,17 @@ def _release_lock():
         pass
 
 
+def _wait_seconds_until(hhmm):
+    """距今天内指定时刻的秒数；时刻已过或格式无效返回 0。"""
+    try:
+        h, m = str(hhmm).split(":")
+        target = datetime.now(CST).replace(hour=int(h), minute=int(m),
+                                           second=0, microsecond=0)
+    except (ValueError, TypeError):
+        return 0
+    return max(0, int((target - datetime.now(CST)).total_seconds()))
+
+
 def cmd_status(cfg):
     """只读状态一览：发送记录、池规模、去重库、存档、配置摘要。"""
     llm_cfg = cfg.get("llm") or {}
@@ -354,6 +366,14 @@ def main():
             f.write(html_text)
         log.info("预览已生成: %s", out)
         return
+
+    # 准点发送：策展提前完成时，等到 send_at 再发出（重试预算因此可以前置）
+    send_at = str((cfg.get("email") or {}).get("send_at") or "").strip()
+    if send_at and not args.send_test:
+        wait = _wait_seconds_until(send_at)
+        if wait > 0:
+            log.info("策展完成，等待 %d 秒至 %s 准点发送", wait, send_at)
+            time.sleep(wait)
 
     send_email(cfg, subject, html_text, plain_text)
     if not args.send_test:

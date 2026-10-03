@@ -64,19 +64,20 @@ python3 -m venv venv
 ./venv/bin/python main.py --preview   # 确认能跑通
 ```
 
-`crontab -e` 添加（北京时间 9:00 前送达，含失败补偿）：
+`crontab -e` 添加（8:45 开始策展，**9:00 准点送达**，含失败补偿）：
 
 ```cron
 CRON_TZ=Asia/Shanghai
 0 */3 * * *    cd /opt/day60sMsg && ./venv/bin/python main.py --crawl          >> /dev/null 2>> logs/cron.err
 45 8 * * *     cd /opt/day60sMsg && ./venv/bin/python main.py --send           >> /dev/null 2>> logs/cron.err
 55 8 * * *     cd /opt/day60sMsg && ./venv/bin/python main.py --send-if-needed >> /dev/null 2>> logs/cron.err
+06 9 * * *     cd /opt/day60sMsg && ./venv/bin/python main.py --send-if-needed >> /dev/null 2>> logs/cron.err
 15 9 * * *     cd /opt/day60sMsg && ./venv/bin/python main.py --send-if-needed >> /dev/null 2>> logs/cron.err
 ```
 
 - 第一行：每 3 小时抓取一轮入候选池（可自行加密到每小时，开销极小）
-- 第二行：每天 8:45 补抓最新内容并策展发送
-- 第三、四行：补偿发送——只有当天尚未成功发送时才会执行（8:45 失败时自动补救）
+- 第二行：8:45 开始补抓与 AI 策展（给重试留足时间），完成后**等到 9:00 准点发出**（`email.send_at` 可改）
+- 第三、四、五行：补偿发送——只有当天尚未成功发送时才会执行（8:45 任务意外失败时自动补救）
 - 日志：完整运行日志在 `logs/YYYYMM.log`，`logs/cron.err` 只有报错堆栈
 - **失败告警**：正式发送失败时，程序会给自己发一封告警邮件（每天最多一封）
 - 运行锁：30 分钟 TTL，防止 cron 重叠；异常退出的锁会自动过期

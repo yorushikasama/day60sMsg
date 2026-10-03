@@ -9,6 +9,9 @@ email:
   from_name: "day60sMsg"   # 收件箱中显示的发件人名称
   to_addrs:
     - "123456789@qq.com"
+  # 准点发送：cron 提前开始策展（8:45），策展完成后等到该时刻准时发出。
+  # 留空则策展完成立即发送。
+  send_at: "09:00"
   smtp:
     host: smtp.qq.com
     port: 465
