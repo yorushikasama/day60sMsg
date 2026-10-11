@@ -97,16 +97,14 @@ def run_daily(cfg, send_test=False, no_llm=False, preview=False):
     preview 模式只生成 preview/preview.html（补抓会照常入池）；
     send_test 模式真实发送但不记录去重、不清池、不写已发标记、不触发后置动作。
     """
-    now = datetime.now(CST)
     intro, sections, tip, pool = curate_from_pool(cfg, use_llm=not no_llm)
     total = sum(len(s["items"]) for s in sections)
     log.info("策展完成：%d 个版块 %d 条", len(sections), total)
 
-    subject = email_builder.build_subject(now)
-    html_text = email_builder.build_html(now, intro, sections, tip)
-    plain_text = email_builder.build_plain(intro, sections)
-
     if preview:
+        now = datetime.now(CST)
+        subject = email_builder.build_subject(now)
+        html_text = email_builder.build_html(now, intro, sections, tip)
         preview_dir = os.path.join(BASE_DIR, "preview")
         os.makedirs(preview_dir, exist_ok=True)
         out = os.path.join(preview_dir, "preview.html")
@@ -122,6 +120,12 @@ def run_daily(cfg, send_test=False, no_llm=False, preview=False):
         if wait > 0:
             log.info("策展完成，等待 %d 秒至 %s 准点发送", wait, send_at)
             time.sleep(wait)
+
+    # 时间戳在真正发送的这一刻捕获：日期/期号/页脚都应反映送达时间，而非策展开始时间
+    now = datetime.now(CST)
+    subject = email_builder.build_subject(now)
+    html_text = email_builder.build_html(now, intro, sections, tip)
+    plain_text = email_builder.build_plain(intro, sections)
 
     send_email(cfg, subject, html_text, plain_text)
     if not send_test:
