@@ -82,7 +82,26 @@ CRON_TZ=Asia/Shanghai
 - **失败告警**：正式发送失败时，程序会给自己发一封告警邮件（每天最多一封）
 - 运行锁：30 分钟 TTL，防止 cron 重叠；异常退出的锁会自动过期
 
-> 旧版 cron 不支持 `CRON_TZ` 的话，把服务器时区设为东八区（`timedatectl set-timezone Asia/Shanghai`）后去掉该行。
+> ⚠️ **时区是硬前提**：很多 cron 实现（如 Ubuntu 的 vixie-cron）**不支持 `CRON_TZ`**，
+> 会直接按系统时区解释时间。因此必须先设系统时区，否则发送时刻会整体偏移（例如系统为
+> UTC 时，`45 8 * * *` 实际在北京时间 16:45 触发）：
+>
+> ```bash
+> sudo timedatectl set-timezone Asia/Shanghai && sudo systemctl restart cron
+> ```
+>
+> 程序每次运行都会自检时区，不一致时会在日志里报错并在 `--status` 显示 ❌。
+
+## 服务器迁移检查清单
+
+换服务器后按此清单逐项确认（漏项会导致时间偏移或直接不发）：
+
+1. `sudo timedatectl set-timezone Asia/Shanghai && sudo systemctl restart cron`
+2. 迁移 `config.local.yaml`（含 SMTP 授权码与 LLM key），并 `chmod 600`
+3. 重建 venv：`python3 -m venv venv && ./venv/bin/pip install -r requirements.txt`
+4. 安装 crontab（见上），再用 `crontab -l` 核对
+5. 验证：`./venv/bin/python main.py --status`，确认「系统时区」行为 ✅、今日已发送状态正确
+6. 手动发一封：`./venv/bin/python main.py --send-test`
 
 ## 接入 X（Twitter）动向（可选）
 

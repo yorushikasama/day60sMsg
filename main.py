@@ -75,6 +75,7 @@ def main(argv=None):
 
     try:
         cfg = config.load_config()
+        state.check_timezone()  # 时区漂移会导致 cron 触发时刻整体偏移，先自检
 
         if args.dry_run:
             pipeline.dry_run(cfg)

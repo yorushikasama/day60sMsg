@@ -1,8 +1,9 @@
-"""本地运行状态：数据目录、运行锁、今日已发/告警去重标记。"""
+"""本地运行状态：数据目录、运行锁、今日已发/告警去重标记、时区自检。"""
 import atexit
 import json
 import logging
 import os
+import time as _time
 from datetime import datetime
 
 from sources import CST
@@ -17,6 +18,25 @@ def data_path(name):
     path = os.path.join(BASE_DIR, "data", name)
     os.makedirs(os.path.dirname(path), exist_ok=True)
     return path
+
+
+def check_timezone():
+    """自检系统时区与程序常量是否一致；不一致时告警（返回是否一致）。
+
+    程序的调度假定运行在 Asia/Shanghai：cron 按系统时区解释时间，而代码用
+    CST 常量算"准点发送"，两者不一致会导致发送时刻整体偏移（服务器迁移后常见）。
+    """
+    local_offset = _time.localtime().tm_gmtoff              # 系统 UTC 偏移（秒）
+    expected_offset = int(datetime.now(CST).utcoffset().total_seconds())
+    if local_offset != expected_offset:
+        log.error(
+            "系统时区偏移 %+d 小时与程序预期 %+d 小时不一致："
+            "cron 会按系统时区触发，发送时刻将整体偏移！"
+            "请执行 sudo timedatectl set-timezone Asia/Shanghai 并重启 cron",
+            local_offset // 3600, expected_offset // 3600,
+        )
+        return False
+    return True
 
 
 def acquire_lock(ttl_minutes=30):

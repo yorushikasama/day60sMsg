@@ -91,7 +91,6 @@ def _wait_seconds_until(hhmm):
         return 0
     return max(0, int((target - datetime.now(CST)).total_seconds()))
 
-
 def run_daily(cfg, send_test=False, no_llm=False, preview=False):
     """日发送流水线：策展 -> 渲染 -> （等待准点）-> 发送 -> 存档/推送/状态更新。
 
@@ -180,6 +179,9 @@ def status(cfg):
     llm_cfg = cfg.get("llm") or {}
     print("== day60sMsg 运行状态 ==")
     print("时间      :", datetime.now(CST).strftime("%Y-%m-%d %H:%M:%S %Z"))
+    tz_ok = state.check_timezone()
+    print("系统时区  :", datetime.now().astimezone().strftime("%Z %z"),
+          "✅ 与程序一致" if tz_ok else "❌ 不一致！cron 触发时刻会偏移")
     print("今日已发送:", "是" if state.sent_today() else "否")
     marker = state._read_marker("last_sent.json")
     print("上次发送  :", marker.get("at", "无记录"))
